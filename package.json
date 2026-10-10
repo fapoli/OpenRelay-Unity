@@ -1,0 +1,12 @@
+{
+  "name": "com.fapoli.openrelay",
+  "version": "0.1.0",
+  "displayName": "OpenRelay",
+  "description": "Unity client for the openrelay UDP relay server.",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.unity.netcode.gameobjects": "2.0.0",
+    "com.unity.transport": "2.0.0",
+    "com.unity.collections": "2.0.0"
+  }
+}
