@@ -9,14 +9,14 @@ namespace OpenRelay {
 
 /// <summary>
 /// INetworkInterface that routes all UTP traffic through an openrelay UDP relay.
-/// Send: prepends [4 bytes sessionToken BE][16 bytes peerSecret] to every packet.
-/// Receive: strips the [4 bytes senderIndex] the relay prepends, maps it to a synthetic NetworkEndpoint.
+/// Send: prepends [4 bytes sessionToken BE][4 bytes peerToken][1 byte targetPeerIndex] to every packet.
+/// Receive: strips the [4 bytes senderIndex] the relay prepends, maps it to synthetic endpoint 10.0.0.{senderIndex}.
 /// </summary>
 public struct RelayNetworkInterface : INetworkInterface {
     private int _stateId;
     private const ushort SyntheticPort = 7777;
 
-    public const string HostAddress = "10.0.0.1";
+    public const string HostAddress = "10.0.0.0";
     public const ushort HostPort = SyntheticPort;
 
     public static NetworkEndpoint HostEndpoint => NetworkEndpoint.Parse(HostAddress, HostPort);
@@ -32,19 +32,20 @@ public struct RelayNetworkInterface : INetworkInterface {
     /// <param name="relayHost">Hostname or IP of the relay server.</param>
     /// <param name="relayPort">UDP port of the relay server.</param>
     /// <param name="sessionToken">Token identifying the session on the relay.</param>
-    /// <param name="peerSecret">16-byte secret identifying this peer within the session.</param>
-    public void Configure(string relayHost, int relayPort, uint sessionToken, byte[] peerSecret) {
+    /// <param name="peerToken">4-byte token identifying this peer within the session.</param>
+    public void Configure(string relayHost, int relayPort, uint sessionToken, byte[] peerToken, byte peerIndex) {
         var s = new State();
         var addresses = Dns.GetHostAddresses(relayHost);
         s.RelayEndpoint = new IPEndPoint(addresses[0], relayPort);
         s.RecvBuffer = new byte[4096];
 
-        s.SendHeader = new byte[20];
+        s.SendHeader = new byte[9];
         s.SendHeader[0] = (byte)(sessionToken >> 24);
         s.SendHeader[1] = (byte)(sessionToken >> 16);
         s.SendHeader[2] = (byte)(sessionToken >> 8);
         s.SendHeader[3] = (byte)(sessionToken);
-        System.Buffer.BlockCopy(peerSecret, 0, s.SendHeader, 4, 16);
+        System.Buffer.BlockCopy(peerToken, 0, s.SendHeader, 4, 4);
+        s.SendHeader[8] = peerIndex;
 
         _stateId = State.Register(s);
     }
@@ -85,11 +86,20 @@ public struct RelayNetworkInterface : INetworkInterface {
             var packet = queue[i];
             if (packet.Length == 0) continue;
 
-            var sendBuf = new byte[20 + packet.Length];
-            System.Buffer.BlockCopy(s.SendHeader, 0, sendBuf, 0, 20);
+            var sendBuf = new byte[9 + packet.Length];
+            System.Buffer.BlockCopy(s.SendHeader, 0, sendBuf, 0, 9);
+
+            // Parse peerIndex from synthetic endpoint IP (10.0.0.{peerIndex})
+            var epStr = packet.EndpointRef.ToString(); // "10.0.0.X:port"
+            var lastDot = epStr.LastIndexOf('.');
+            var lastColon = epStr.LastIndexOf(':');
+            if (lastDot >= 0 && lastColon > lastDot &&
+                byte.TryParse(epStr.Substring(lastDot + 1, lastColon - lastDot - 1), out var peerIdx))
+                sendBuf[8] = peerIdx;
+            // else byte 8 remains our own peerIndex (copied from SendHeader) — relay skips sender, nothing forwarded
 
             fixed (byte* dst = sendBuf)
-                UnsafeUtility.MemCpy(dst + 20,
+                UnsafeUtility.MemCpy(dst + 9,
                     (byte*)packet.GetUnsafePayloadPtr() + packet.Offset,
                     packet.Length);
 
@@ -124,12 +134,7 @@ public struct RelayNetworkInterface : INetworkInterface {
 
             if (received == 4) continue;
 
-            if (!s.IndexToEndpoint.TryGetValue(senderIndex, out var endpoint)) {
-                endpoint = NetworkEndpoint.Parse(
-                    $"10.{(senderIndex >> 8) & 0xFF}.{senderIndex & 0xFF}.1",
-                    SyntheticPort);
-                s.IndexToEndpoint[senderIndex] = endpoint;
-            }
+            var endpoint = NetworkEndpoint.Parse($"10.0.0.{senderIndex}", SyntheticPort);
 
             if (!arguments.ReceiveQueue.EnqueuePacket(out var packetProcessor)) continue;
 
@@ -156,7 +161,6 @@ public struct RelayNetworkInterface : INetworkInterface {
         public IPEndPoint RelayEndpoint;
         public byte[] SendHeader;
         public byte[] RecvBuffer;
-        public Dictionary<uint, NetworkEndpoint> IndexToEndpoint = new();
         public bool Registered;
         public int LastKeepaliveTick;
 

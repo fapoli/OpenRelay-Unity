@@ -13,7 +13,7 @@ public class NetworkRelay : MonoBehaviour {
         public string code;
         public string password;
         public uint sessionToken;
-        public byte[] peerSecret;
+        public byte[] peerToken;
         public int peerIndex;
     }
 
@@ -25,6 +25,16 @@ public class NetworkRelay : MonoBehaviour {
     [SerializeField] private int relayPort = 7777;
 
     public static string playerName { get; set; } = "Player";
+
+    private const string CodeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+    /// <summary>Returns a random 6-character session code matching the relay server's format.</summary>
+    public static string randomCode() {
+        var chars = new char[6];
+        for (int i = 0; i < chars.Length; i++)
+            chars[i] = CodeChars[UnityEngine.Random.Range(0, CodeChars.Length)];
+        return new string(chars);
+    }
 
     public void Awake() {
         if (instance != null) { Destroy(gameObject); return; }
@@ -56,7 +66,7 @@ public class NetworkRelay : MonoBehaviour {
 
     private void startNgo(SessionInfo session, bool isHost) {
         var relay = new RelayNetworkInterface();
-        relay.Configure(new Uri(relayUrl).Host, relayPort, session.sessionToken, session.peerSecret);
+        relay.Configure(new Uri(relayUrl).Host, relayPort, session.sessionToken, session.peerToken, (byte)session.peerIndex);
 
         var transport = networkManager.GetComponent<UnityTransport>();
         transport.SetConnectionData(RelayNetworkInterface.HostAddress, RelayNetworkInterface.HostPort);
@@ -66,6 +76,7 @@ public class NetworkRelay : MonoBehaviour {
             networkManager.StartHost();
         else
             networkManager.StartClient();
+
     }
 
     private async Task<SessionInfo> createSession(string code, string password) {
@@ -102,7 +113,7 @@ public class NetworkRelay : MonoBehaviour {
             code = parsed.code,
             password = includePassword ? parsed.password : null,
             sessionToken = (uint)parsed.sessionToken,
-            peerSecret = hexToBytes(parsed.peerSecret),
+            peerToken = hexToBytes(parsed.peerToken),
             peerIndex = parsed.peerIndex,
         };
     }
@@ -130,7 +141,7 @@ public class NetworkRelay : MonoBehaviour {
         public string code;
         public string password;
         public long sessionToken;
-        public string peerSecret;
+        public string peerToken;
         public int peerIndex;
     }
 }
