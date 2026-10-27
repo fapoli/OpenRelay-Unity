@@ -9,8 +9,8 @@ Unity client for [openrelay](https://github.com/fapoli/openrelay) — routes NGO
 
 This module handles two things:
 
-1. **Session management** — calls the openrelay HTTP API to create or join a session, receiving a session token and peer secret
-2. **Transport wiring** — plugs a custom `INetworkInterface` into NGO's Unity Transport that wraps every UDP packet with the session token and peer secret, routing it through the relay server instead of directly to other peers
+1. **Session management** — calls the openrelay HTTP API to create or join a session, receiving a session token and a 4-byte peer token that identifies this peer within the session
+2. **Transport wiring** — plugs a custom `INetworkInterface` into NGO's Unity Transport that prepends a 9-byte relay header `[4B sessionToken][4B peerToken][1B targetPeerIndex]` to every outgoing UDP packet and strips the 4-byte sender index the relay prepends to incoming packets, mapping each sender to a synthetic endpoint `10.0.0.{peerIndex}`
 
 ## Requirements
 
